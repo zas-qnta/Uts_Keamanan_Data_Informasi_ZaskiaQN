@@ -1,11 +1,71 @@
 <?php
+// Mode terkunci: setiap potongan teks pada halaman diganti ciphertext sebelum dikirim ke browser.
+// Teks dienkripsi dengan encrypt_content() (AES-256-GCM, kunci AES dibungkus RSA public key).
+function kunci_teks(string $s): string
+{
+    if (trim($s) === '') {
+        return $s;
+    }
+    preg_match('/^(\s*)(.*?)(\s*)$/s', $s, $m);
+    $asli = html_entity_decode($m[2], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    try {
+        $enc   = encrypt_content($asli);
+        $hasil = $enc['ciphertext'];
+    } catch (Throwable $e) {
+        $hasil = base64_encode(random_bytes(max(8, strlen($asli))));
+    }
+    return $m[1] . e($hasil) . $m[3];
+}
+
+function kunci_tampilan(string $html, int $phase = 0): string
+{
+    $bagian      = preg_split('/(<[^>]*>)/', $html, -1, PREG_SPLIT_DELIM_CAPTURE);
+    $lewatiTag   = false;
+    $sudahCipher = false;
+    $hasil       = '';
+
+    foreach ($bagian as $p) {
+        if ($p === '') {
+            continue;
+        }
+        if ($p[0] === '<') {
+            if (preg_match('/^<(style|script)\b/i', $p)) {
+                $lewatiTag = true;
+            } elseif (preg_match('/^<\/(style|script)\b/i', $p)) {
+                $lewatiTag = false;
+            }
+            $hasil .= $p;
+            continue;
+        }
+        if ($lewatiTag) {
+            $hasil .= $p;
+            continue;
+        }
+        foreach (preg_split('/([\x01\x02])/', $p, -1, PREG_SPLIT_DELIM_CAPTURE) as $s) {
+            if ($s === "\x01") {
+                $sudahCipher = true;
+            } elseif ($s === "\x02") {
+                $sudahCipher = false;
+            } else {
+                $hasil .= $sudahCipher ? $s : kunci_teks($s);
+            }
+        }
+    }
+    return $hasil;
+}
+
 function admin_head(string $title, string $active): void
 {
+    if (!admin_terbuka()) {
+        ob_start('kunci_tampilan');
+    }
     $menu = [
         'dashboard' => ['dashboard.php', '&#128202; Dashboard'],
         'pegawai'   => ['pegawai.php', '&#128101; Data Pegawai'],
-        'enkripsi'  => ['enkripsi.php', '&#128274; Enkripsi &amp; Dekripsi'],
     ];
+    if (is_file(__DIR__ . '/enkripsi.php')) {
+        $menu['enkripsi'] = ['enkripsi.php', '&#128274; Enkripsi &amp; Dekripsi'];
+    }
     ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -64,6 +124,9 @@ function admin_head(string $title, string $active): void
         }
         .btn-logout:hover { background-color: #ef4444 !important; color: white !important; }
         .table-wrap { overflow-x: auto; }
+<?php if (!admin_terbuka()): ?>
+        .main-content *, .sidebar * { word-break: break-all; font-family: Consolas, monospace; }
+<?php endif; ?>
     </style>
 </head>
 <body>
@@ -75,6 +138,9 @@ function admin_head(string $title, string $active): void
     <a href="../auth/logout.php" class="btn-logout">Keluar Sistem</a>
 </div>
 <div class="main-content">
+<?php if (!admin_terbuka()): ?>
+    <div class="alert danger">Mode terkunci: private key yang dimasukkan tidak cocok dengan public key sistem. Seluruh teks hanya tampil sebagai ciphertext dan data tidak dapat diubah. <a href="../auth/login.php" style="color:#fecaca; font-weight:600;">Masukkan private key yang benar</a></div>
+<?php endif; ?>
 <?php
 }
 
@@ -85,4 +151,7 @@ function admin_foot(): void
 </body>
 </html>
 <?php
+    if (!admin_terbuka() && ob_get_level() > 0) {
+        ob_end_flush();
+    }
 }

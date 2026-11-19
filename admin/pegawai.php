@@ -3,8 +3,12 @@ require_once __DIR__ . '/../config/bootstrap.php';
 require_once __DIR__ . '/layout.php';
 require_login();
 
-$priv   = $_SESSION['admin_private_key'];
 $fields = ['nip', 'nama', 'jabatan', 'email', 'telepon'];
+
+function flash(string $type, string $msg): void
+{
+    $_SESSION['flash'] = [$type, $msg];
+}
 
 // Salinan data publik (nama dan jabatan). NIP, email, telepon hanya ada di paket terenkripsi.
 function sync_publik(PDO $pdo, int $id, array $data): void
@@ -12,16 +16,24 @@ function sync_publik(PDO $pdo, int $id, array $data): void
     if ($id <= 0) {
         return;
     }
-    $st = $pdo->prepare("INSERT INTO pegawai_publik (pegawai_id, nama, jabatan) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE nama = ?, jabatan = ?");
-    $st->execute([$id, $data['nama'], $data['jabatan'], $data['nama'], $data['jabatan']]);
-}
-function flash(string $type, string $msg): void
-{
-    $_SESSION['flash'] = [$type, $msg];
+    try {
+        $st = $pdo->prepare("INSERT INTO pegawai_publik (pegawai_id, nama, jabatan) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE nama = ?, jabatan = ?");
+        $st->execute([$id, $data['nama'], $data['jabatan'], $data['nama'], $data['jabatan']]);
+    } catch (Throwable $e) {
+        // tabel pegawai_publik belum dibuat: abaikan
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
+
+    // Mode terkunci: hanya boleh melihat
+    if (!admin_terbuka()) {
+        flash('danger', 'Mode terkunci: data tidak dapat diubah tanpa private key yang cocok.');
+        header('Location: pegawai.php');
+        exit;
+    }
+
     $action = $_POST['action'] ?? '';
 
     try {
@@ -42,9 +54,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     sync_publik($pdo, (int)$pdo->lastInsertId(), $data);
                     flash('success', 'Data pegawai dienkripsi dan disimpan ke database.');
                 } else {
+                    $id = (int)($_POST['id'] ?? 0);
                     $stmt = $pdo->prepare("UPDATE pegawai_terenkripsi SET ciphertext = ?, iv = ?, tag = ?, wrapped_key = ? WHERE id = ?");
-                    $stmt->execute([$enc['ciphertext'], $enc['iv'], $enc['tag'], $enc['wrapped_key'], (int)($_POST['id'] ?? 0)]);
-                    sync_publik($pdo, (int)($_POST['id'] ?? 0), $data);
+                    $stmt->execute([$enc['ciphertext'], $enc['iv'], $enc['tag'], $enc['wrapped_key'], $id]);
+                    sync_publik($pdo, $id, $data);
                     flash('success', 'Data pegawai diperbarui dan dienkripsi ulang.');
                 }
             }
@@ -67,14 +80,14 @@ unset($_SESSION['flash']);
 $list = [];
 try {
     foreach ($pdo->query("SELECT * FROM pegawai_terenkripsi ORDER BY id DESC")->fetchAll() as $r) {
-        $list[] = ['row' => $r, 'data' => decrypt_row($r, $priv)];
+        $list[] = ['row' => $r, 'data' => baca_baris($r)];
     }
 } catch (Throwable $e) {
     $flash = ['danger', 'Gagal membaca database: ' . $e->getMessage()];
 }
 
 $edit = null;
-if (isset($_GET['edit'])) {
+if (admin_terbuka() && isset($_GET['edit'])) {
     foreach ($list as $it) {
         if ((int)$it['row']['id'] === (int)$_GET['edit'] && $it['data']) {
             $edit = $it['data'] + ['id' => $it['row']['id']];
@@ -96,6 +109,7 @@ admin_head('Data Pegawai', 'pegawai');
         <div class="alert <?= e($flash[0]); ?>"><?= e($flash[1]); ?></div>
     <?php endif; ?>
 
+    <?php if (admin_terbuka()): ?>
     <h3 style="margin-top: 20px;"><?= $edit ? 'Edit Data Pegawai' : '+ Tambah Pegawai Baru'; ?></h3>
     <form method="POST" action="pegawai.php">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()); ?>">
@@ -111,30 +125,30 @@ admin_head('Data Pegawai', 'pegawai');
         <button type="submit" class="btn btn-primary" style="margin-top: 14px;"><?= $edit ? 'Simpan Perubahan' : 'Enkripsi &amp; Simpan'; ?></button>
         <?php if ($edit): ?><a href="pegawai.php" class="btn btn-edit" style="margin-top: 14px;">Batal</a><?php endif; ?>
     </form>
+    <?php else: ?>
+        <p>Form tambah dan ubah data hanya tersedia untuk admin dengan private key yang cocok.</p>
+    <?php endif; ?>
 </div>
 
 <div class="card">
-    <h3>Daftar Pegawai (hasil dekripsi)</h3>
+    <h3>Daftar Pegawai <?= admin_terbuka() ? '(hasil dekripsi)' : '(ciphertext)'; ?></h3>
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>No</th><th>NIP</th><th>Nama</th><th>Jabatan</th><th>Email</th><th>Telepon</th><th>Ciphertext di DB</th><th>Aksi</th></tr>
+                <tr><th>No</th><th>NIP</th><th>Nama</th><th>Jabatan</th><th>Email</th><th>Telepon</th><th>Ciphertext di DB</th><?php if (admin_terbuka()): ?><th>Aksi</th><?php endif; ?></tr>
             </thead>
             <tbody>
             <?php if (count($list) > 0): ?>
                 <?php $no = 1; foreach ($list as $it): $r = $it['row']; $d = $it['data']; ?>
                     <tr>
                         <td><?= $no++; ?></td>
-                        <?php if ($d): ?>
-                            <td><?= e($d['nip'] ?? ''); ?></td>
-                            <td><?= e($d['nama'] ?? ''); ?></td>
-                            <td><?= e($d['jabatan'] ?? ''); ?></td>
-                            <td><?= e($d['email'] ?? ''); ?></td>
-                            <td><?= e($d['telepon'] ?? ''); ?></td>
-                        <?php else: ?>
-                            <td colspan="5" style="color:#f87171;">[gagal didekripsi]</td>
-                        <?php endif; ?>
-                        <td class="cipher"><?= e(substr($r['ciphertext'], 0, 24)); ?>...</td>
+                        <td><?= sel_data($d, $r, 'nip', 0); ?></td>
+                        <td><?= sel_data($d, $r, 'nama', 1); ?></td>
+                        <td><?= sel_data($d, $r, 'jabatan', 2); ?></td>
+                        <td><?= sel_data($d, $r, 'email', 3); ?></td>
+                        <td><?= sel_data($d, $r, 'telepon', 4); ?></td>
+                        <td class="cipher"><?= ct(substr($r['ciphertext'], 0, 24) . '...'); ?></td>
+                        <?php if (admin_terbuka()): ?>
                         <td style="white-space: nowrap;">
                             <?php if ($d): ?><a href="pegawai.php?edit=<?= (int)$r['id']; ?>" class="btn btn-edit">Edit</a><?php endif; ?>
                             <form method="POST" action="pegawai.php" style="display:inline" onsubmit="return confirm('Yakin ingin menghapus data ini?')">
@@ -144,6 +158,7 @@ admin_head('Data Pegawai', 'pegawai');
                                 <button type="submit" class="btn btn-danger">Hapus</button>
                             </form>
                         </td>
+                        <?php endif; ?>
                     </tr>
                 <?php endforeach; ?>
             <?php else: ?>

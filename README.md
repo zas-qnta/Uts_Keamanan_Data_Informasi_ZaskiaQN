@@ -8,7 +8,7 @@ Dibuat dengan PHP native dan MySQL untuk tugas kriptografi simetris dan asimetri
 
 | Ketentuan | Penerapan |
 |---|---|
-| Login admin tidak memakai password, diganti input kunci / private key | `auth/login.php` menerima RSA private key (tempel teks PEM atau pilih file `.pem`). Kunci diverifikasi terhadap `keys/public.pem` sebelum sesi dibuat. |
+| Login admin tidak memakai password, diganti input kunci / private key | `auth/login.php` menerima RSA private key (tempel teks PEM atau pilih file `.pem`). Kunci diperiksa terhadap `keys/public.pem`. Jika cocok, data didekripsi. Jika tidak cocok, panel tetap terbuka dalam mode terkunci: seluruh teks pada halaman admin tampil sebagai ciphertext dan data tidak dapat diubah. |
 | Setelah masuk, semua konten halaman admin didekripsi | `admin/dashboard.php` dan `admin/pegawai.php` mendekripsi setiap baris database dengan private key yang dipakai login. |
 | Konten dibuat dan disimpan dalam bentuk terenkripsi | Data pegawai dienkripsi lebih dulu (`encryption/hybrid.php`), baru disimpan ke tabel `pegawai_terenkripsi`. |
 | Kode, hasil, dan database dikumpulkan | Kode dan database ada di repositori ini (`database/kepegawaian.sql`). Kode dan hasilnya disatukan dalam satu file PDF. |

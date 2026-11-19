@@ -3,13 +3,12 @@ require_once __DIR__ . '/../config/bootstrap.php';
 require_once __DIR__ . '/layout.php';
 require_login();
 
-$priv    = $_SESSION['admin_private_key'];
 $list    = [];
 $dbError = '';
 
 try {
     foreach ($pdo->query("SELECT * FROM pegawai_terenkripsi ORDER BY id ASC")->fetchAll() as $r) {
-        $list[] = ['row' => $r, 'data' => decrypt_row($r, $priv)];
+        $list[] = ['row' => $r, 'data' => baca_baris($r)];
     }
 } catch (Throwable $e) {
     $dbError = $e->getMessage();
@@ -42,7 +41,7 @@ admin_head('Enkripsi dan Dekripsi', 'enkripsi');
 <div class="card">
     <h1>Enkripsi dan Dekripsi Data</h1>
     <p>Halaman ini membandingkan data yang tersimpan di database (terenkripsi) dengan hasil dekripsinya menggunakan private key admin.</p>
-    <p>Kolom kanan adalah isi database: data pegawai dienkripsi AES-256-GCM, lalu kunci AES-nya dibungkus RSA-OAEP. Kolom kiri adalah data asli setelah dibuka dengan private key.</p>
+    <p>Kolom kanan adalah isi database: data pegawai dienkripsi AES-256-GCM, lalu kunci AES-nya dibungkus RSA-OAEP. Kolom kiri adalah data asli setelah dibuka dengan private key. Tanpa key yang cocok, kolom kiri tetap berupa ciphertext.</p>
     <?php if ($dbError !== ''): ?>
         <div class="alert danger">Gagal membaca database: <?= e($dbError); ?></div>
     <?php endif; ?>
@@ -58,21 +57,17 @@ admin_head('Enkripsi dan Dekripsi', 'enkripsi');
     <h3>Pegawai <?= $i + 1; ?> (ID database: <?= (int)$r['id']; ?>)</h3>
     <div class="pair">
         <div class="kolom">
-            <h4>&#128275; Hasil Dekripsi</h4>
-            <?php if ($d): ?>
-                <?php foreach ($label as $k => $nama): ?>
-                    <div class="baris"><span class="k"><?= e($nama); ?></span><span class="v"><?= e($d[$k] ?? ''); ?></span></div>
-                <?php endforeach; ?>
-            <?php else: ?>
-                <div class="alert danger">Gagal didekripsi. Pastikan private key yang dipakai login sesuai.</div>
-            <?php endif; ?>
+            <h4><?= $d !== null ? '&#128275; Hasil Dekripsi' : '&#128274; Tidak Dapat Didekripsi'; ?></h4>
+            <?php $urut = 0; foreach ($label as $k => $nama): ?>
+                <div class="baris"><span class="k"><?= e($nama); ?></span><span class="v"><?= sel_data($d, $r, $k, $urut++); ?></span></div>
+            <?php endforeach; ?>
         </div>
         <div class="kolom">
             <h4>&#128274; Data Terenkripsi (di database)</h4>
-            <div class="baris"><span class="k">Ciphertext (AES-256-GCM)</span><span class="v cipher"><?= e(potong((string)$r['ciphertext'])); ?></span></div>
-            <div class="baris"><span class="k">IV</span><span class="v cipher"><?= e($r['iv']); ?></span></div>
-            <div class="baris"><span class="k">Tag Autentikasi</span><span class="v cipher"><?= e($r['tag']); ?></span></div>
-            <div class="baris"><span class="k">Kunci AES Terbungkus (RSA-OAEP)</span><span class="v cipher"><?= e(potong((string)$r['wrapped_key'])); ?></span></div>
+            <div class="baris"><span class="k">Ciphertext (AES-256-GCM)</span><span class="v cipher"><?= ct(potong((string)$r['ciphertext'])); ?></span></div>
+            <div class="baris"><span class="k">IV</span><span class="v cipher"><?= ct($r['iv']); ?></span></div>
+            <div class="baris"><span class="k">Tag Autentikasi</span><span class="v cipher"><?= ct($r['tag']); ?></span></div>
+            <div class="baris"><span class="k">Kunci AES Terbungkus (RSA-OAEP)</span><span class="v cipher"><?= ct(potong((string)$r['wrapped_key'])); ?></span></div>
         </div>
     </div>
 </div>
